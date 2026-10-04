@@ -144,16 +144,35 @@
   }
   .color-dot:active{transform:scale(1.15)}
   .editor{
-    min-height:150px;max-height:46vh;overflow-y:auto;outline:none;
+    min-height:150px;max-height:46vh;overflow-y:auto;
     font-size:.95rem;line-height:1.9;color:var(--ink);
     background:
       repeating-linear-gradient(transparent,transparent calc(1.9em - 1px),rgba(179,166,142,.28) calc(1.9em - 1px),rgba(179,166,142,.28) 1.9em);
   }
-  .editor p{margin:0}
-  .editor .sk{font-weight:700;line-height:1.9}
-  .editor .sk-blue{color:#3a6ea5}
-  .editor .sk-green{color:#4e7d4e}
-  .editor .sk-red{color:#c0392b}
+  .thought-row{
+    display:grid;grid-template-columns:max-content minmax(0,1fr);align-items:start;
+    gap:8px;min-height:1.9em;
+  }
+  .thought-tag{
+    display:inline-flex;align-items:center;height:1.55rem;margin-top:.18rem;padding:0 8px;
+    border-radius:999px;font-size:.72rem;font-weight:700;line-height:1;white-space:nowrap;
+    user-select:none;-webkit-user-select:none;
+  }
+  .tag-blue{color:#3a6ea5;background:#e7f0f8;border:1px solid #c9ddec}
+  .tag-green{color:#4e7d4e;background:#eaf0e6;border:1px solid #d4e0ce}
+  .tag-red{color:#c0392b;background:#f7e7e3;border:1px solid #edcbc3}
+  .thought-content,.thought-free{
+    min-width:0;min-height:1.9em;outline:none;overflow-wrap:anywhere;white-space:pre-wrap;
+  }
+  .thought-content[contenteditable="true"]:focus,.thought-free:focus{
+    background:rgba(255,253,247,.72);box-shadow:inset 0 -1px var(--red);
+  }
+  .thought-content[contenteditable="true"]:empty::before,.thought-free:empty::before{
+    content:attr(data-placeholder);color:var(--ink-faint);pointer-events:none;
+  }
+  .thought-content.readonly{color:var(--ink-soft);cursor:default}
+  .thought-free{margin-top:.1rem}
+  .thought-content p,.thought-content div,.thought-free p,.thought-free div{margin:0}
 
   nav{
     position:fixed;left:0;right:0;bottom:0;z-index:30;
@@ -417,7 +436,7 @@
         <button class="color-dot" data-color="#3a6ea5" style="background:#3a6ea5" title="蓝"></button>
         <button class="color-dot" data-color="#3a332a" style="background:#3a332a" title="黑"></button>
       </div>
-      <div class="editor" id="editor" contenteditable="true"></div>
+      <div class="editor" id="editor"></div>
     </div>
   </section>
 
@@ -587,6 +606,9 @@ function load(){
 }
 function saveAll(data){ localStorage.setItem(STORE_KEY, JSON.stringify(data)); }
 
+function blankThoughts(){
+  return { "今日饮食":"", "今日饮食自动":"", "今日感悟":"", "自由记录":"" };
+}
 function blankEntry(){
   return {
     "体重":"",
@@ -594,11 +616,93 @@ function blankEntry(){
     "英语单词":"",
     "今日基础": { "刷牙":false, "洗脸":false, "护肤":false, "戒欲":false },
     "今日锻炼": "",
-    "感想":"",
+    "感想":blankThoughts(),
     "更新时间":null
   };
 }
 var BASE_ITEMS = ["刷牙","洗脸","护肤","戒欲"];
+var SK = {
+  diet: { "id":"sk-diet", "label":"今日饮食", "tagClass":"tag-blue" },
+  prev: { "id":"sk-prev", "label":"昨日感悟", "tagClass":"tag-green" },
+  feel: { "id":"sk-feel", "label":"今日感悟", "tagClass":"tag-red" }
+};
+
+function escHtml(s){
+  return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+function htmlText(html){
+  var tmp = document.createElement("div");
+  tmp.innerHTML = html || "";
+  return tmp.textContent.replace(/\xa0/g," ").replace(/\s+/g," ").trim();
+}
+function cleanFragment(html){
+  var tmp = document.createElement("div");
+  tmp.innerHTML = html || "";
+  tmp.querySelectorAll("script,style,iframe,object,embed,link,meta,img,video,audio").forEach(function(el){ el.remove(); });
+  var allowed = { B:1, STRONG:1, I:1, EM:1, U:1, SPAN:1, DIV:1, P:1, BR:1 };
+  Array.prototype.slice.call(tmp.querySelectorAll("*")).forEach(function(el){
+    if(!allowed[el.tagName]){
+      while(el.firstChild) el.parentNode.insertBefore(el.firstChild, el);
+      el.remove();
+      return;
+    }
+    var styles = [];
+    ["color","font-weight","font-style","text-decoration","text-decoration-line"].forEach(function(name){
+      var value = el.style && el.style.getPropertyValue(name);
+      if(value && !/url\s*\(/i.test(value)) styles.push(name+":"+value);
+    });
+    Array.prototype.slice.call(el.attributes).forEach(function(attr){ el.removeAttribute(attr.name); });
+    if(styles.length) el.setAttribute("style", styles.join(";"));
+  });
+  if(!tmp.textContent.replace(/\xa0/g," ").trim() && !tmp.querySelector("br")) return "";
+  return tmp.innerHTML;
+}
+function legacyThoughts(html){
+  var out = blankThoughts();
+  if(!html) return out;
+  var tmp = document.createElement("div");
+  tmp.innerHTML = html;
+  var diet = tmp.querySelector("#sk-diet-c");
+  var feel = tmp.querySelector("#sk-feel-c");
+  if(!diet && !feel){
+    out["今日感悟"] = cleanFragment(html);
+    return out;
+  }
+  if(diet) out["今日饮食"] = cleanFragment(diet.innerHTML);
+  if(feel) out["今日感悟"] = cleanFragment(feel.innerHTML);
+  ["sk-diet","sk-prev","sk-feel"].forEach(function(id){
+    var tag = tmp.querySelector("#"+id);
+    if(tag && tag.parentNode) tag.parentNode.remove();
+  });
+  out["自由记录"] = cleanFragment(tmp.innerHTML);
+  out["今日饮食自动"] = htmlText(out["今日饮食"]);
+  return out;
+}
+function normalizeThoughts(entry){
+  var raw = entry && entry["感想"];
+  if(raw && typeof raw === "object" && !Array.isArray(raw)){
+    var normalized = blankThoughts();
+    ["今日饮食","今日饮食自动","今日感悟","自由记录"].forEach(function(k){
+      if(raw[k] != null) normalized[k] = String(raw[k]);
+    });
+    entry["感想"] = normalized;
+    return normalized;
+  }
+  var migrated = legacyThoughts(typeof raw === "string" ? raw : "");
+  if(entry) entry["感想"] = migrated;
+  return migrated;
+}
+function previousDate(ds){
+  var d = new Date(ds+"T12:00:00");
+  d.setDate(d.getDate()-1);
+  return dateStr(d);
+}
+function prevThoughtFor(ds){
+  var prev = previousDate(ds);
+  var entry = load()[prev];
+  var html = entry ? normalizeThoughts(entry)["今日感悟"] : "";
+  return { date:prev, html:cleanFragment(html), text:htmlText(html) };
+}
 var current = null;
 function getEntry(){
   if(!current){
@@ -613,19 +717,10 @@ function getEntry(){
     if(typeof current["今日基础"][k] !== "boolean") current["今日基础"][k] = false;
   });
   if(current["今日锻炼"] === undefined || current["今日锻炼"] === null) current["今日锻炼"] = "";
-  /* 老数据 / 缺骨架时补上默认三条 */
-  var needsSk = !current["感想"] ||
-    (current["感想"].indexOf("sk-diet") === -1 && current["感想"].indexOf("sk-feel") === -1 && current["感想"].indexOf("sk-prev") === -1);
-  if(needsSk){
-    var oldHtml = current["感想"] || "";
-    var diet = dietFromExpenses(current);
-    var feel = oldHtml ? extractFeel(oldHtml) : "";   /* 旧"今日感悟"的内容挪到"今日感悟"行 */
-    var free = oldHtml ? stripSkeletonText(oldHtml) : "";
-    var h = "<p>"+skSpan(SK.diet, escHtml(diet))+"</p>" +
-            "<p>"+skSpan(SK.prev, escHtml(getPrevFeel()))+"</p>" +
-            "<p>"+skSpan(SK.feel, escHtml(feel))+"</p>";
-    if(free) h += "<p>"+escHtml(free)+"</p>";
-    current["感想"] = h;
+  var thoughts = normalizeThoughts(current);
+  if(!htmlText(thoughts["今日饮食"])){
+    thoughts["今日饮食"] = escHtml(dietFromExpenses(current));
+    thoughts["今日饮食自动"] = dietFromExpenses(current);
   }
   return current;
 }
@@ -633,11 +728,12 @@ function resetCurrent(){ current = null; }
 function persist(){
   var data = load();
   var e = getEntry();
+  var thoughts = normalizeThoughts(e);
   e["更新时间"] = new Date().toISOString();
   var empty = (e["体重"]===""||e["体重"]==null) && (e["英语单词"]===""||e["英语单词"]==null)
     && (e["今日锻炼"]===""||e["今日锻炼"]==null)
     && !BASE_ITEMS.some(function(k){ return e["今日基础"] && e["今日基础"][k]; })
-    && (!e["感想"] || e["感想"].replace(/<[^>]*>/g,"").trim()==="")
+    && !["今日饮食","今日感悟","自由记录"].some(function(k){ return htmlText(thoughts[k]); })
     && e["消费"].every(function(r){ return (r["金额"]===""||r["金额"]==null) && !(r["备注"]||"").trim(); });
   if(empty && editingDate!==logicalToday()){ delete data[editingDate]; }
   else { data[editingDate] = e; }
@@ -668,17 +764,7 @@ function touched(){
   syncTimer = setTimeout(function(){ syncNow(false); }, 5000);
 }
 
-/* ---------- 感想骨架 ---------- */
-var SK = {
-  diet: { "id":"sk-diet",  "label":"今日饮食：", "cls":"sk sk-blue", "color":"#3a6ea5" },
-  prev: { "id":"sk-prev",  "label":"昨日感悟：", "cls":"sk sk-green","color":"#4e7d4e" },
-  feel: { "id":"sk-feel",  "label":"今日感悟：", "cls":"sk sk-red",  "color":"#c0392b" }
-};
-function escHtml(s){ return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
-function skSpan(cfg, body){
-  return '<span id="'+cfg.id+'" class="'+cfg.cls+'" data-color="'+cfg.color+'">'+cfg.label+'</span>'+
-         '<span id="'+cfg.id+'-c">'+body+'</span>';
-}
+/* ---------- 感想：固定标签 + 独立内容区 ---------- */
 /* 根据消费备注生成"今日饮食"内容（分号间隔） */
 function dietFromExpenses(e){
   var parts = [];
@@ -688,115 +774,45 @@ function dietFromExpenses(e){
   });
   return parts.join("；");
 }
-/* 保证 editor 里有三条默认行（今日饮食 / 昨日感悟 / 今日感悟），用户追加内容一律保留 */
-function ensureSkeleton(){
-  var e = getEntry();
-  var ed = $("editor");
-
-  /* ① 今日饮食 */
-  if(!ed.querySelector("#"+SK.diet.id)){
-    var p1 = document.createElement("p");
-    p1.innerHTML = skSpan(SK.diet, "");
-    ed.insertBefore(p1, ed.firstChild);
-  }
-  var dietP = ed.querySelector("#"+SK.diet.id).parentNode;
-
-  /* ② 昨日感悟：内容恒等于前一天感悟，不随本页编辑改变 */
-  var prevLine = df_getPrevFeel();
-  if(!ed.querySelector("#"+SK.prev.id)){
-    var p2 = document.createElement("p");
-    p2.innerHTML = skSpan(SK.prev, escHtml(prevLine));
-    if(dietP && dietP.nextSibling) ed.insertBefore(p2, dietP.nextSibling);
-    else ed.appendChild(p2);
-  }else{
-    var pc = ed.querySelector("#"+SK.prev.id+"-c");
-    if(pc) pc.textContent = prevLine;
-  }
-  var prevP = ed.querySelector("#"+SK.prev.id).parentNode;
-
-  /* ③ 今日感悟：默认留空，由用户手填 */
-  if(!ed.querySelector("#"+SK.feel.id)){
-    var p3 = document.createElement("p");
-    p3.innerHTML = skSpan(SK.feel, "");
-    ed.insertBefore(p3, prevP.nextSibling);
-  }
-
-  /* 末尾补一个空段落，方便继续写 */
-  var last = ed.lastElementChild;
-  var lastIsFeel = last && last.querySelector && last.querySelector("#"+SK.feel.id);
-  if(!last || lastIsFeel){
-    var p4 = document.createElement("p");
-    p4.appendChild(document.createElement("br"));
-    ed.appendChild(p4);
-  }
+function thoughtRow(cfg, body, editable){
+  return '<div class="thought-row" data-section="'+cfg.id+'">' +
+    '<span class="thought-tag '+cfg.tagClass+'" contenteditable="false">'+cfg.label+'</span>' +
+    '<div id="'+cfg.id+'-c" class="thought-content'+(editable?' thought-editable':' readonly')+'" contenteditable="'+(editable?'true':'false')+'"'+
+      (editable?' data-placeholder="在这里填写…"':'')+'>'+body+'</div></div>';
 }
-/* 前一天（自然日）的感悟纯文本；昨天没有则往前找最近一天（供骨架②使用） */
-function df_getPrevFeel(){
-  var data = load();
-  var base = new Date(editingDate+"T00:00:00");
-  var prev = dateStr(new Date(base.getTime()-86400000));
-  if(!data[prev]){
-    var keys = Object.keys(data).filter(function(k){ return k < editingDate; }).sort().reverse();
-    if(!keys.length) return "";
-    prev = keys[0];
-  }
-  return extractFeel(data[prev] && data[prev]["感想"]);
+function renderThoughtEditor(e){
+  var thoughts = normalizeThoughts(e);
+  var prev = prevThoughtFor(editingDate);
+  activeThoughtEditor = null;
+  $("editor").innerHTML = thoughtRow(SK.diet, thoughts["今日饮食"], true) +
+    thoughtRow(SK.prev, prev.html, false) +
+    thoughtRow(SK.feel, thoughts["今日感悟"], true) +
+    '<div id="sk-free-c" class="thought-free thought-editable" contenteditable="true" data-placeholder="继续写点别的…">'+thoughts["自由记录"]+'</div>';
 }
-/* 别名：语义同上 */
-function getPrevFeel(){ return df_getPrevFeel(); }
-/* 从整篇感想 HTML 中取出"今日感悟"那一行的正文 */
-function extractFeel(html){
-  var tmp = document.createElement("div");
-  tmp.innerHTML = html || "";
-  var c = tmp.querySelector("#"+SK.feel.id+"-c");
-  if(c) return c.textContent.trim();
-  /* 兼容没有骨架标记的老数据：整篇纯文本 */
-  return (html||"").replace(/<[^>]*>/g," ").replace(/\s+/g," ").trim();
-}/* 列表缩略：只显示"今日感悟"这一行的内容 */
-function previewText(html){
-  if(!html) return "";
-  var tmp = document.createElement("div");
-  tmp.innerHTML = html;
-  var c = tmp.querySelector("#"+SK.feel.id+"-c");
-  if(c) return c.textContent.replace(/\xa0/g," ").trim();
-  /* 兜底：没有骨架标记的旧纯文本，整篇取用 */
-  return (html||"").replace(/<[^>]*>/g," ").replace(/\s+/g," ").trim();
+function saveThoughtEditor(){
+  var thoughts = normalizeThoughts(getEntry());
+  thoughts["今日饮食"] = cleanFragment($("sk-diet-c").innerHTML);
+  thoughts["今日感悟"] = cleanFragment($("sk-feel-c").innerHTML);
+  thoughts["自由记录"] = cleanFragment($("sk-free-c").innerHTML);
 }
-function renderFeelHtml(html){
-  if(!html) return "";
-  var tmp = document.createElement("div");
-  tmp.innerHTML = html;
-  [SK.diet, SK.prev, SK.feel].forEach(function(cfg){
-    var sp = tmp.querySelector("#"+cfg.id);
-    if(sp && sp.parentNode){
-      var body = sp.parentNode.textContent.replace(new RegExp("^"+cfg.label.replace("：","")+"：?"), "");
-      sp.parentNode.innerHTML = skSpan(cfg, escHtml(body));
-    }
-  });
-  return tmp.innerHTML;
+function renderThoughtDetail(e, ds){
+  var thoughts = normalizeThoughts(e);
+  return thoughtRow(SK.diet, thoughts["今日饮食"], false) +
+    thoughtRow(SK.prev, prevThoughtFor(ds).html, false) +
+    thoughtRow(SK.feel, thoughts["今日感悟"], false) +
+    (thoughts["自由记录"] ? '<div class="thought-free">'+thoughts["自由记录"]+'</div>' : "");
 }
-function stripSkeletonText(html){
-  if(!html) return "";
-  var tmp = document.createElement("div");
-  tmp.innerHTML = html;
-  [SK.diet, SK.prev, SK.feel].forEach(function(cfg){
-    var sp = tmp.querySelector("#"+cfg.id);
-    if(sp && sp.parentNode && sp.parentNode.parentNode){
-      sp.parentNode.parentNode.removeChild(sp.parentNode);
-    }
-  });
-  return tmp.textContent.replace(/\xa0/g," ").replace(/\s+/g," ").trim();
-}
-/* 实时同步"今日饮食"（不覆盖用户手动追加的内容） */
+/* 实时同步"今日饮食"（保留用户在自动内容后手动追加的文字） */
 function syncDietLine(){
   var e = getEntry();
-  var ed = $("editor");
+  var thoughts = normalizeThoughts(e);
   var want = dietFromExpenses(e);
-  var c = ed.querySelector("#"+SK.diet.id+"-c");
+  var c = $("sk-diet-c");
   if(!c) return;
-  var cur = c.textContent.trim();
+  var cur = htmlText(c.innerHTML);
+  var oldAuto = thoughts["今日饮食自动"] || "";
   /* 若当前内容与上一次自动同步的值一致（或本来就为空），就整体替换；否则仅在后面追加缺失项 */
-  if(!cur || c.dataset.auto === cur){
+  if(!cur || oldAuto === cur){
     c.textContent = want;
   }else{
     var missing = [];
@@ -805,8 +821,8 @@ function syncDietLine(){
     });
     if(missing.length) c.textContent = cur.replace(/\s*$/,"") + (cur ? "；" : "") + missing.join("；");
   }
-  c.dataset.auto = want;
-  getEntry()["感想"] = ed.innerHTML;
+  thoughts["今日饮食自动"] = want;
+  thoughts["今日饮食"] = cleanFragment(c.innerHTML);
 }
 
 /* ---------- 今日基础（单选项） ---------- */
@@ -833,9 +849,7 @@ function renderForm(){
   var e = getEntry();
   $("inpWeight").value = e["体重"];
   $("inpWords").value = e["英语单词"];
-  $("editor").innerHTML = e["感想"] || "";
-  ensureSkeleton();
-  getEntry()["感想"] = $("editor").innerHTML;
+  renderThoughtEditor(e);
   renderExp(e);
   renderBase(e);
   renderHeader();
@@ -860,15 +874,15 @@ function renderExp(e){
     amtI.addEventListener("input", function(){ row["金额"] = amtI.value===""?"":parseFloat(amtI.value)||0; touched(); updateTotal(); });
     noteI.addEventListener("input", function(){
       row["备注"] = noteI.value;
-      touched();
       syncDietLine();   /* 实时同步到"今日饮食" */
+      touched();
     });
     if(locked){
       delB.addEventListener("click", function(){ toast("午饭/晚饭是默认项，不可删除"); });
     }else{
       delB.addEventListener("click", function(){
         getEntry()["消费"].splice(i,1);
-        touched(); renderExp(getEntry());
+        syncDietLine(); touched(); renderExp(getEntry());
       });
     }
     list.appendChild(div);
@@ -883,15 +897,9 @@ function updateTotal(){
 
 $("inpWeight").addEventListener("input", function(){ var e=getEntry(); e["体重"] = this.value===""?"":parseFloat(this.value)||0; touched(); });
 $("inpWords").addEventListener("input", function(){ var e=getEntry(); e["英语单词"] = this.value===""?"":parseInt(this.value,10)||0; touched(); });
-$("editor").addEventListener("input", function(){
-  /* 骨架②「昨日感悟」恒为前一天内容，编辑后立即回填 */
-  var ed = $("editor");
-  var pc = ed.querySelector("#"+SK.prev.id+"-c");
-  if(pc){
-    var prevWanted = df_getPrevFeel();
-    if(pc.textContent !== prevWanted) pc.textContent = prevWanted;
-  }
-  getEntry()["感想"] = ed.innerHTML;
+$("editor").addEventListener("input", function(ev){
+  if(!ev.target.closest(".thought-editable")) return;
+  saveThoughtEditor();
   touched();
 });
 $("btnAddExp").addEventListener("click", function(){
@@ -903,23 +911,30 @@ $("btnAddExp").addEventListener("click", function(){
 
 /* 富文本：粗斜下 + 五色 */
 try{ document.execCommand("styleWithCSS", false, true); }catch(e){}
+var activeThoughtEditor = null;
+$("editor").addEventListener("focusin", function(ev){
+  var target = ev.target.closest(".thought-editable");
+  if(target) activeThoughtEditor = target;
+});
 /* mousedown 阻止默认行为，保持编辑器选区不丢失 */
 document.querySelectorAll(".tool-btn, .color-dot").forEach(function(btn){
   btn.addEventListener("mousedown", function(ev){ ev.preventDefault(); });
 });
 document.querySelectorAll(".tool-btn").forEach(function(btn){
   btn.addEventListener("click", function(){
-    $("editor").focus();
+    var target = activeThoughtEditor || $("sk-feel-c");
+    target.focus();
     document.execCommand(btn.dataset.cmd, false, null);
-    getEntry()["感想"] = $("editor").innerHTML;
+    saveThoughtEditor();
     touched();
   });
 });
 document.querySelectorAll(".color-dot").forEach(function(btn){
   btn.addEventListener("click", function(){
-    $("editor").focus();
+    var target = activeThoughtEditor || $("sk-feel-c");
+    target.focus();
     document.execCommand("foreColor", false, btn.dataset.color);
-    getEntry()["感想"] = $("editor").innerHTML;
+    saveThoughtEditor();
     touched();
   });
 });
@@ -935,7 +950,7 @@ var saveBtnTimer = null;
 $("btnSave").addEventListener("click", function(){
   var btn = $("btnSave");
   /* 把编辑器当前内容落盘 */
-  getEntry()["感想"] = $("editor").innerHTML;
+  saveThoughtEditor();
   persist();
   clearTimeout(saveTimer);              /* 取消延迟中的自动保存提示，避免覆盖文案 */
   var n = new Date();
@@ -983,11 +998,12 @@ function renderHistory(){
     var bst = e["今日基础"] || {};
     var bdone = BASE_ITEMS.filter(function(k){ return bst[k]; }).length;
     if(bdone > 0) chips += '<span class="chip">基础 '+bdone+'/'+BASE_ITEMS.length+'</span>';
-    var preview = previewText(e["感想"]);
+    /* 往昔缩略只取“今日感悟”，不混入饮食、昨日感悟或自由记录 */
+    var preview = htmlText(normalizeThoughts(e)["今日感悟"]);
     item.innerHTML =
       '<div class="hist-day serif">'+d.getDate()+'号<small>周'+WD[d.getDay()]+'</small></div>' +
       '<div class="hist-meta"><div class="hist-chips">'+(chips||'<span class="chip">空白一页</span>')+'</div>' +
-      (preview?'<div class="hist-feel">'+preview.replace(/</g,"&lt;").slice(0,60)+'</div>':"") + '</div>';
+      (preview?'<div class="hist-feel">'+escHtml(preview.slice(0,60))+'</div>':"") + '</div>';
     item.addEventListener("click", function(){ openDetail(ds); });
     box.appendChild(item);
   });
@@ -1035,9 +1051,11 @@ function openDetail(ds){
     }).join("");
   }
 
-  var hasFeel = !!(e["感想"]||"").replace(/<[^>]*>/g,"").trim();
+  var thoughts = normalizeThoughts(e);
+  var hasFeel = [thoughts["今日饮食"], thoughts["今日感悟"], thoughts["自由记录"], prevThoughtFor(ds).html]
+    .some(function(html){ return !!htmlText(html); });
   $("dSecFeel").style.display = hasFeel?"block":"none";
-  if(hasFeel) $("dFeel").innerHTML = renderFeelHtml(e["感想"]);
+  if(hasFeel) $("dFeel").innerHTML = renderThoughtDetail(e, ds);
 
   $("dMoveDate").value = ds;
   $("detailMask").classList.add("show");
@@ -1336,14 +1354,39 @@ $("btnSyncOff").addEventListener("click", function(){
 });
 
 /* ---------- 导出 / 导入 ---------- */
+function importThoughts(src, entry){
+  var thoughts = blankThoughts();
+  var rich = src["感想富文本"];
+  if(rich && typeof rich === "object" && !Array.isArray(rich)){
+    thoughts["今日饮食"] = cleanFragment(rich["今日饮食"] || "");
+    thoughts["今日感悟"] = cleanFragment(rich["今日感悟"] || "");
+    thoughts["自由记录"] = cleanFragment(rich["自由记录"] || "");
+  }else if(typeof rich === "string" && rich){
+    thoughts = legacyThoughts(rich);
+  }else{
+    var plain = src["感想"] && typeof src["感想"] === "object" ? src["感想"] : {};
+    var diet = plain["今日饮食"] != null ? plain["今日饮食"] : src["今日饮食"];
+    var feel = plain["今日感悟"] != null ? plain["今日感悟"] : src["今日感悟"];
+    var free = plain["自由记录"] != null ? plain["自由记录"] : src["自由记录"];
+    /* 兼容更早的“感想”为纯文本格式：整段视为今日感悟 */
+    if(feel == null && typeof src["感想"] === "string") feel = src["感想"];
+    thoughts["今日饮食"] = escHtml(diet == null ? "" : String(diet));
+    thoughts["今日感悟"] = escHtml(feel == null ? "" : String(feel));
+    thoughts["自由记录"] = escHtml(free == null ? "" : String(free));
+  }
+  thoughts["今日饮食自动"] = dietFromExpenses(entry);
+  return thoughts;
+}
 $("btnExport").addEventListener("click", function(){
   var data = load();
   if(Object.keys(data).length===0){ toast("还没有数据可导出"); return; }
-  var out = { "应用":"一日手账", "导出版本":2, "导出时间":"", "日记":{} };
+  var out = { "应用":"一日手账", "导出版本":3, "导出时间":"", "日记":{} };
   var n = new Date();
   out["导出时间"] = dateStr(n)+" "+pad(n.getHours())+":"+pad(n.getMinutes());
   Object.keys(data).sort().forEach(function(ds){
     var e = data[ds];
+    var thoughts = normalizeThoughts(e);
+    var prev = prevThoughtFor(ds);
     var total = 0;
     (e["消费"]||[]).forEach(function(r){
       var a = parseFloat(r["金额"]); if(!isNaN(a)) total += a;
@@ -1362,12 +1405,17 @@ $("btnExport").addEventListener("click", function(){
         return { "类别":r["类别"]||"其他", "金额":(r["金额"]===""||r["金额"]==null)?null:r["金额"], "金额单位":"元", "备注":r["备注"]||"" };
       }),
       "消费合计": total>0?Math.round(total*100)/100:null,
-      "今日饮食": dietFromExpenses(e),
-      "昨日感悟": df_getPrevFeel(),
-      "今日感悟": extractFeel(e["感想"]),
-      "自由记录": stripSkeletonText(e["感想"]),
-      "感想": previewText(e["感想"]),
-      "感想富文本": e["感想"]||"",
+      "感想": {
+        "今日饮食": htmlText(thoughts["今日饮食"]),
+        "昨日感悟": prev.text,
+        "今日感悟": htmlText(thoughts["今日感悟"]),
+        "自由记录": htmlText(thoughts["自由记录"])
+      },
+      "感想富文本": {
+        "今日饮食": thoughts["今日饮食"],
+        "今日感悟": thoughts["今日感悟"],
+        "自由记录": thoughts["自由记录"]
+      },
       "更新时间": e["更新时间"]||null
     };
   });
@@ -1407,17 +1455,8 @@ $("fileImport").addEventListener("change", function(){
             return { "类别":String(r["类别"]||"其他"), "金额":(r["金额"]==null||r["金额"]==="")?"":(parseFloat(r["金额"])||0), "备注":String(r["备注"]||"") };
           });
         }
-        /* 感想：优先用富文本原样恢复（骨架完好）；否则按新字段重建骨架 */
-        if(src["感想富文本"]){
-          entry["感想"] = src["感想富文本"];
-        }else{
-          var diet = src["今日饮食"] != null ? String(src["今日饮食"]) : "";
-          var feel = src["今日感悟"] != null ? String(src["今日感悟"]) : "";
-          var free = src["自由记录"] != null ? String(src["自由记录"]) : (src["感想"] ? String(src["感想"]) : "");
-          var h = "<p>"+skSpan(SK.diet, escHtml(diet))+"</p><p>"+skSpan(SK.prev, "")+"</p><p>"+skSpan(SK.feel, escHtml(feel))+"</p>";
-          if(free) h += "<p>"+escHtml(free)+"</p>";
-          entry["感想"] = h;
-        }
+        /* v3 使用分区数据；v2/旧版富文本在这里自动迁移，昨日感悟始终重新派生 */
+        entry["感想"] = importThoughts(src, entry);
         entry["更新时间"] = src["更新时间"] || new Date().toISOString();
         data[ds] = entry; count++;
       });

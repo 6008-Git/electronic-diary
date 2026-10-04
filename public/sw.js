@@ -1,4 +1,4 @@
-var CACHE = "yiri-shouzhang-v4";
+var CACHE = "yiri-shouzhang-v5";
 var ASSETS = [
   "./",
   "./index.html",
