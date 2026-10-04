@@ -1,0 +1,19 @@
+# 运行时数据（云同步缓存，不入库）
+sync_data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
