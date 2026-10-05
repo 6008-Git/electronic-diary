@@ -144,18 +144,24 @@
   }
   .color-dot:active{transform:scale(1.15)}
   .editor{
-    min-height:150px;max-height:46vh;overflow-y:auto;
+    /* 随内容自动增高：不设 max-height / overflow，避免出现滚动条 */
+    min-height:150px;
     font-size:.95rem;line-height:1.9;color:var(--ink);
+    /* 横线步长与行高严格一致（同用 1.9em），保证文字始终压在横线上 */
     background:
       repeating-linear-gradient(transparent,transparent calc(1.9em - 1px),rgba(179,166,142,.28) calc(1.9em - 1px),rgba(179,166,142,.28) 1.9em);
+    background-attachment:local;
   }
+  /* 每一行（标签行 / 自由记录块）都严格占 1.9em 的整数倍，背景横线才不会错位 */
   .thought-row{
     display:grid;grid-template-columns:max-content minmax(0,1fr);align-items:start;
     gap:8px;min-height:1.9em;
   }
   .thought-tag{
-    display:inline-flex;align-items:center;height:1.55rem;margin-top:.18rem;padding:0 8px;
-    border-radius:999px;font-size:.72rem;font-weight:700;line-height:1;white-space:nowrap;
+    display:inline-flex;align-items:center;padding:0 8px;
+    /* 高度锁定为一行行高，垂直居中，避免撑高整行 */
+    height:1.9em;
+    border-radius:999px;font-size:.8em;font-weight:700;line-height:1;white-space:nowrap;
     user-select:none;-webkit-user-select:none;
   }
   .tag-blue{color:#3a6ea5;background:#e7f0f8;border:1px solid #c9ddec}
@@ -163,6 +169,7 @@
   .tag-red{color:#c0392b;background:#f7e7e3;border:1px solid #edcbc3}
   .thought-content,.thought-free{
     min-width:0;min-height:1.9em;outline:none;overflow-wrap:anywhere;white-space:pre-wrap;
+    line-height:1.9;   /* 与容器、横线步长一致 */
   }
   .thought-content[contenteditable="true"]:focus,.thought-free:focus{
     background:rgba(255,253,247,.72);box-shadow:inset 0 -1px var(--red);
@@ -718,9 +725,11 @@ function getEntry(){
   });
   if(current["今日锻炼"] === undefined || current["今日锻炼"] === null) current["今日锻炼"] = "";
   var thoughts = normalizeThoughts(current);
-  if(!htmlText(thoughts["今日饮食"])){
-    thoughts["今日饮食"] = escHtml(dietFromExpenses(current));
-    thoughts["今日饮食自动"] = dietFromExpenses(current);
+  /* 首次进入（饮食为空且无自动记录）时，用消费备注初始化自动部分 */
+  if(!htmlText(thoughts["今日饮食"]) && !htmlText(thoughts["今日饮食自动"])){
+    var auto0 = dietFromExpenses(current);
+    thoughts["今日饮食自动"] = auto0;
+    thoughts["今日饮食"] = escHtml(auto0);
   }
   return current;
 }
@@ -802,25 +811,36 @@ function renderThoughtDetail(e, ds){
     thoughtRow(SK.feel, thoughts["今日感悟"], false) +
     (thoughts["自由记录"] ? '<div class="thought-free">'+thoughts["自由记录"]+'</div>' : "");
 }
-/* 实时同步"今日饮食"（保留用户在自动内容后手动追加的文字） */
+/* 实时同步"今日饮食"（保留用户在自动内容后手动追加的文字）
+ * 模型：最终内容 = 自动部分（来自消费备注） + 手动后缀（用户自己敲的）
+ * 用「今日饮食自动」精确记住上一次自动写入的部分，每次整体替换该部分，
+ * 绝不把逐字符输入累积成重复片段。 */
 function syncDietLine(){
   var e = getEntry();
   var thoughts = normalizeThoughts(e);
-  var want = dietFromExpenses(e);
+  var want = dietFromExpenses(e);           /* 本次应有的自动部分 */
   var c = $("sk-diet-c");
   if(!c) return;
-  var cur = htmlText(c.innerHTML);
-  var oldAuto = thoughts["今日饮食自动"] || "";
-  /* 若当前内容与上一次自动同步的值一致（或本来就为空），就整体替换；否则仅在后面追加缺失项 */
-  if(!cur || oldAuto === cur){
-    c.textContent = want;
-  }else{
-    var missing = [];
-    want.split("；").forEach(function(n){
-      if(n && cur.indexOf(n) === -1) missing.push(n);
-    });
-    if(missing.length) c.textContent = cur.replace(/\s*$/,"") + (cur ? "；" : "") + missing.join("；");
+  var cur = htmlText(c.innerHTML);          /* 当前显示的全部文字 */
+  var oldAuto = htmlText(thoughts["今日饮食自动"] || "");  /* 上一次自动写入的部分 */
+
+  /* 计算"手动后缀"：从当前内容中剥掉上一次的自动部分，剩下的就是用户手写的 */
+  var manual = cur;
+  if(oldAuto && cur.indexOf(oldAuto) === 0){
+    manual = cur.slice(oldAuto.length);
+  }else if(oldAuto && cur.indexOf(oldAuto) > 0){
+    /* 自动部分不在开头（用户可能在前/后都写了），按出现位置切除 */
+    manual = cur.slice(0, cur.indexOf(oldAuto)) + cur.slice(cur.indexOf(oldAuto) + oldAuto.length);
   }
+  manual = manual.replace(/^[；;\s]+/, "").replace(/[；;\s]+$/, "");
+
+  /* 拼接：自动部分 + 手动后缀（都没有则为空） */
+  var parts = [];
+  if(want) parts.push(want);
+  if(manual) parts.push(manual);
+  var next = parts.join("；");
+
+  if(next !== cur) c.textContent = next;
   thoughts["今日饮食自动"] = want;
   thoughts["今日饮食"] = cleanFragment(c.innerHTML);
 }
@@ -870,8 +890,15 @@ function renderExp(e){
       '<button class="exp-del'+(locked?' locked':'')+'" title="'+(locked?'默认项不可删除':'删除')+'">'+(locked?'锁':'×')+'</button>';
     var catI = div.querySelector(".exp-cat"), amtI = div.querySelector(".exp-amt"),
         noteI = div.querySelector(".exp-note"), delB = div.querySelector(".exp-del");
-    catI.addEventListener("input", function(){ row["类别"] = catI.value; catI.classList.toggle("custom", catI.value!=="午饭"&&catI.value!=="晚饭"); touched(); });
-    amtI.addEventListener("input", function(){ row["金额"] = amtI.value===""?"":parseFloat(amtI.value)||0; touched(); updateTotal(); });
+    catI.addEventListener("input", function(){
+      row["类别"] = catI.value;
+      catI.classList.toggle("custom", catI.value!=="午饭"&&catI.value!=="晚饭");
+      touched(); updateTotal(); syncDietLine();
+    });
+    amtI.addEventListener("input", function(){
+      row["金额"] = amtI.value===""?"":parseFloat(amtI.value)||0;
+      touched(); updateTotal(); syncDietLine();
+    });
     noteI.addEventListener("input", function(){
       row["备注"] = noteI.value;
       syncDietLine();   /* 实时同步到"今日饮食" */
@@ -882,7 +909,8 @@ function renderExp(e){
     }else{
       delB.addEventListener("click", function(){
         getEntry()["消费"].splice(i,1);
-        syncDietLine(); touched(); renderExp(getEntry());
+        syncDietLine(); touched(); updateTotal();
+        renderExp(getEntry());
       });
     }
     list.appendChild(div);
