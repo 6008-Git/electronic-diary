@@ -890,17 +890,22 @@ function renderExp(e){
       '<button class="exp-del'+(locked?' locked':'')+'" title="'+(locked?'默认项不可删除':'删除')+'">'+(locked?'锁':'×')+'</button>';
     var catI = div.querySelector(".exp-cat"), amtI = div.querySelector(".exp-amt"),
         noteI = div.querySelector(".exp-note"), delB = div.querySelector(".exp-del");
+    /* 关键：不闭包引用 row（resetCurrent 后会脱钩变成孤儿对象），
+       每次事件都从 getEntry() 按索引取最新行 —— 保存/云同步后输入不再丢失 */
     catI.addEventListener("input", function(){
-      row["类别"] = catI.value;
+      var r = getEntry()["消费"][i]; if(!r) return;
+      r["类别"] = catI.value;
       catI.classList.toggle("custom", catI.value!=="午饭"&&catI.value!=="晚饭");
       touched(); updateTotal(); syncDietLine();
     });
     amtI.addEventListener("input", function(){
-      row["金额"] = amtI.value===""?"":parseFloat(amtI.value)||0;
+      var r = getEntry()["消费"][i]; if(!r) return;
+      r["金额"] = amtI.value===""?"":parseFloat(amtI.value)||0;
       touched(); updateTotal(); syncDietLine();
     });
     noteI.addEventListener("input", function(){
-      row["备注"] = noteI.value;
+      var r = getEntry()["消费"][i]; if(!r) return;
+      r["备注"] = noteI.value;
       syncDietLine();   /* 实时同步到"今日饮食" */
       touched();
     });
